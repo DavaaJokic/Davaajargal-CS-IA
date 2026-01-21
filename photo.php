@@ -2,7 +2,7 @@
 session_start();
 include "connection.php";
 
-
+// Check if photo ID is provided
 if (!isset($_GET['id'])) {
     header("Location: index.php");
     exit;
@@ -10,15 +10,14 @@ if (!isset($_GET['id'])) {
 
 $photo_id = intval($_GET['id']);
 
-
-$stmt = mysqli_prepare($conn, "SELECT p.file_path, g.group_name AS event, p.tag, p.date_taken, u.username AS uploader_name
-                                FROM photos p
-                                JOIN groups g ON p.group_id = g.group_id
-                                JOIN users u ON p.uploader_id = u.user_id
-                                WHERE p.photo_id = ?");
-mysqli_stmt_bind_param($stmt, "i", $photo_id);
-mysqli_stmt_execute($stmt);
-$result = mysqli_stmt_get_result($stmt);
+// Get photo details
+$sql = "SELECT p.*, g.group_name, u.username, u.full_name 
+        FROM photos p
+        JOIN groups g ON p.group_id = g.group_id
+        JOIN users u ON p.uploader_id = u.user_id
+        WHERE p.photo_id = $photo_id";
+        
+$result = mysqli_query($conn, $sql);
 
 if (mysqli_num_rows($result) == 0) {
     echo "Зураг олдсонгүй!";
@@ -26,80 +25,87 @@ if (mysqli_num_rows($result) == 0) {
 }
 
 $photo = mysqli_fetch_assoc($result);
-$uploader_display = $photo['uploader_name'] ?? 'Unknown';
-mysqli_stmt_close($stmt);
+
+// Get comments for this photo
+$comments_sql = "SELECT c.*, u.username 
+                 FROM comments c
+                 JOIN users u ON c.user_id = u.user_id
+                 WHERE c.photo_id = $photo_id
+                 ORDER BY c.commented_at DESC";
+$comments_result = mysqli_query($conn, $comments_sql);
 ?>
 
 <!DOCTYPE html>
 <html lang="mn">
 <head>
     <meta charset="UTF-8">
-    <title><?= $photo['event'] ?> - Дурсамж</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/css/bootstrap.min.css" rel="stylesheet">
+    <title><?php echo htmlspecialchars($photo['title']); ?></title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
 </head>
-
-
-
-<body >
-
-
-<nav class="navbar navbar-expand-lg navbar-dark bg-primary shadow-lg sticky-top">
-    <div class="container-fluid container">
-        <a class="navbar-brand fs-4 fw-bold" href="index.php">📷 **Дурсамж**</a>
+<body class="bg-light">
+    <nav class="navbar navbar-dark bg-primary mb-4">
+        <div class="container">
+            <a class="navbar-brand" href="index.php">📷 Дурсамж</a>
+            <a href="index.php" class="btn btn-outline-light btn-sm">Буцах</a>
+        </div>
+    </nav>
+    
+    <div class="container">
+        <!-- Photo -->
+        <div class="card mb-4">
+            <img src="<?php echo htmlspecialchars($photo['file_path']); ?>" 
+                 class="card-img-top" alt="<?php echo htmlspecialchars($photo['title']); ?>">
+            <div class="card-body">
+                <h3><?php echo htmlspecialchars($photo['title']); ?></h3>
+                <p><?php echo htmlspecialchars($photo['description']); ?></p>
+                
+                <div class="text-muted mb-3">
+                    <strong>Үйл явдал:</strong> <?php echo htmlspecialchars($photo['group_name']); ?><br>
+                    <strong>Байршуулсан:</strong> <?php echo htmlspecialchars($photo['full_name']); ?> (@<?php echo htmlspecialchars($photo['username']); ?>)<br>
+                    <strong>Огноо:</strong> <?php echo $photo['date_taken']; ?><br>
+                    <?php if (!empty($photo['tag'])): ?>
+                        <strong>Тэгш:</strong> <?php echo htmlspecialchars($photo['tag']); ?>
+                    <?php endif; ?>
+                </div>
+            </div>
+        </div>
         
-        
-   
-    </div>
-</nav>
-
-<div class="container py-5">
-
-    <h3 class="mb-4"><?= $photo['event'] ?></h3>
-
-    <div class="card mb-4">
-       <img src="<?= $photo['file_path'] ?>" class="img-fluid rounded" alt="<?= $photo['event'] ?>">
-
-        <div class="card-body">
-            <p><strong>Байршуулсан:</strong> <?= $uploader_display ?></p>
-            <p><strong>Огноо:</strong> <?= $photo['date_taken'] ?></p>
-            <p><strong>Tag:</strong> <?= $photo['tag'] ?></p>
+        <!-- Comments -->
+        <div class="card">
+            <div class="card-header">
+                <h5>Сэтгэгдэлүүд</h5>
+            </div>
+            <div class="card-body">
+                <?php if (mysqli_num_rows($comments_result) == 0): ?>
+                    <p class="text-muted">Одоогоор сэтгэгдэл байхгүй байна.</p>
+                <?php else: ?>
+                    <?php while($comment = mysqli_fetch_assoc($comments_result)): ?>
+                        <div class="mb-3 border-bottom pb-3">
+                            <strong><?php echo htmlspecialchars($comment['username']); ?></strong>
+                            <small class="text-muted"><?php echo $comment['commented_at']; ?></small>
+                            <p><?php echo htmlspecialchars($comment['comment_text']); ?></p>
+                        </div>
+                    <?php endwhile; ?>
+                <?php endif; ?>
+                
+                <!-- Comment Form -->
+                <?php if (isset($_SESSION['user_id'])): ?>
+                    <form action="add_comment.php" method="POST">
+                        <input type="hidden" name="photo_id" value="<?php echo $photo_id; ?>">
+                        <div class="mb-3">
+                            <textarea name="comment_text" class="form-control" 
+                                      rows="3" placeholder="Сэтгэгдэлээ бичнэ үү..." required></textarea>
+                        </div>
+                        <button type="submit" class="btn btn-primary">Сэтгэгдэл илгээх</button>
+                    </form>
+                <?php else: ?>
+                    <div class="alert alert-info">
+                        Сэтгэгдэл бичихийн тулд <a href="login.php">нэвтэрнэ үү</a>
+                    </div>
+                <?php endif; ?>
+            </div>
         </div>
     </div>
-
-
-    <?php if (isset($_SESSION['user_id'])): ?>
-    <form action="add_comment.php" method="POST" class="mb-4">
-        <input type="hidden" name="photo_id" value="<?= $photo_id ?>">
-        <div class="input-group">
-            <input type="text" name="comment_text" class="form-control" placeholder="Сэтгэгдэл бичих..." required>
-            <button class="btn btn-primary" type="submit">    <i class="bi bi-send"></i></button>
-        </div>
-    </form>
-    <?php else: ?>
-        <p class="text-muted">Сэтгэгдэл бичихийн тулд нэвтэрнэ үү.</p>
-    <?php endif; ?>
-
-
-    <h5>Сэтгэгдэлүүд</h5>
-    <?php
-    $comments_query = mysqli_query($conn, "SELECT comment_text, commented_at FROM comments WHERE photo_id = {$photo_id} ORDER BY commented_at ASC");
-    if (mysqli_num_rows($comments_query) == 0) {
-        echo "<p class='text-muted'>Одоогоор сэтгэгдэл байхгүй байна.</p>";
-    } else {
-        while ($comment = mysqli_fetch_assoc($comments_query)):
-            $comment_text = htmlspecialchars($comment['comment_text']);
-            $commented_at = $comment['commented_at'];
-    ?>
-    <div class="p-2 mb-2 border rounded bg-light">
-        <?= $comment_text ?>
-        <div class="text-end" style="font-size:0.8rem; color:#555;"><?= $commented_at ?></div>
-    </div>
-    <?php
-        endwhile;
-    }
-    ?>
-
-</div>
 </body>
 </html>
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css">

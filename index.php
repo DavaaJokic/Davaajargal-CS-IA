@@ -1,12 +1,19 @@
 <?php
+// 🟢 Start session
 session_start();
+
+// 🟢 Include database connection
 include "connection.php";
 
-/* ===========================
-   LOGIN CHECK
-=========================== */
-$logged_in = isset($_SESSION['user_id']);
-$current_username = $logged_in ? $_SESSION['username'] : 'Нэвтрэх';
+// 🟢 Check if user is logged in
+if (!isset($_SESSION['user_id'])) {
+    header("Location: login.php");
+    exit;
+}
+
+// 🟢 Get user info
+$logged_in = true;
+$current_username = $_SESSION['username'];
 
 /* ===========================
    DATE, TIMELINE & SORT
@@ -14,60 +21,78 @@ $current_username = $logged_in ? $_SESSION['username'] : 'Нэвтрэх';
 // Selected date from calendar
 $selected_date = isset($_GET['date']) && !empty($_GET['date']) ? $_GET['date'] : null;
 
-// [ADDED] Timeline mode: day | week
+// Timeline mode: day | week
 $timeline = isset($_GET['timeline']) ? $_GET['timeline'] : 'day';
 
-// [ADDED] Sort order
+// Sort order
 $sort = isset($_GET['sort']) ? $_GET['sort'] : 'new';
 $order = ($sort === 'old') ? 'ASC' : 'DESC';
 
 /* ===========================
-   BASE PHOTO QUERY
+   GET PHOTOS FROM DATABASE
 =========================== */
-$photo_sql_template = "SELECT 
-    p.photo_id, 
-    p.file_path, 
-    g.group_name AS event, 
-    p.tag, 
-    p.date_taken, 
-    u.username AS uploader_name
-FROM photos p
-JOIN groups g ON p.group_id = g.group_id
-JOIN users u ON p.uploader_id = u.user_id";
+$sql = "SELECT p.*, g.group_name, u.username 
+        FROM photos p
+        JOIN groups g ON p.group_id = g.group_id
+        JOIN users u ON p.uploader_id = u.user_id";
 
-/* ===========================
-   DATE FILTER + TIMELINE
-=========================== */
+// Add date filter if selected
 if ($selected_date) {
-
     if ($timeline === 'week') {
-        // [ADDED] Weekly timeline filter
-        $photo_sql = $photo_sql_template . "
-            WHERE YEARWEEK(p.date_taken, 1) = YEARWEEK(?, 1)
-            ORDER BY p.date_taken $order";
+        // Weekly timeline filter
+        $sql .= " WHERE YEARWEEK(p.date_taken, 1) = YEARWEEK('$selected_date', 1)";
         $feed_title = "📆 {$selected_date}-ны долоо хоногийн зургууд";
     } else {
-        // [MODIFIED] Daily timeline
-        $photo_sql = $photo_sql_template . "
-            WHERE p.date_taken = ?
-            ORDER BY p.date_taken $order";
+        // Daily timeline
+        $sql .= " WHERE p.date_taken = '$selected_date'";
         $feed_title = "📸 {$selected_date}-ны зургууд";
     }
-
-    $stmt = mysqli_prepare($conn, $photo_sql);
-    mysqli_stmt_bind_param($stmt, "s", $selected_date);
-
 } else {
-    // [MODIFIED] Default feed
-    $photo_sql = $photo_sql_template . "
-        ORDER BY p.date_taken $order
-        LIMIT 12";
+    // No date selected
     $feed_title = "📸 Сүүлд нэмэгдсэн зургууд";
-    $stmt = mysqli_prepare($conn, $photo_sql);
 }
 
-mysqli_stmt_execute($stmt);
-$photo_result = mysqli_stmt_get_result($stmt);
+// Add sorting
+$sql .= " ORDER BY p.uploaded_at $order";
+
+$result = mysqli_query($conn, $sql);
+
+// Check for errors
+if (!$result) {
+    die("Query error: " . mysqli_error($conn));
+}
+
+/* ===========================
+   ORGANIZE PHOTOS BY ALBUM
+=========================== */
+$albums = array(); // Will store albums with their photos
+$all_photos = array(); // Will store all photos in order
+
+while($row = mysqli_fetch_assoc($result)) {
+    $all_photos[] = $row; // Add to all photos array
+    
+    if (!empty($row['album_id'])) {
+        // This photo belongs to an album
+        $album_id = $row['album_id'];
+        
+        // If this album doesn't exist in our array yet, create it
+        if (!isset($albums[$album_id])) {
+            $albums[$album_id] = array(
+                'album_id' => $album_id,
+                'album_name' => $row['title'] . " (Альбом)",
+                'photos' => array(),
+                'count' => 0,
+                'date_taken' => $row['date_taken'],
+                'username' => $row['username'],
+                'uploaded_at' => $row['uploaded_at']
+            );
+        }
+        
+        // Add photo to this album
+        $albums[$album_id]['photos'][] = $row;
+        $albums[$album_id]['count']++;
+    }
+}
 
 /* ===========================
    SIDEBAR USERS
@@ -75,6 +100,7 @@ $photo_result = mysqli_stmt_get_result($stmt);
 $users_sql = "SELECT username FROM users ORDER BY user_id DESC LIMIT 5";
 $users_result = mysqli_query($conn, $users_sql);
 ?>
+
 <!DOCTYPE html>
 <html lang="mn">
 <head>
@@ -95,7 +121,7 @@ body {
     min-height: 100vh;
 }
 .photo-card-img {
-    height: 220px; /* [MODIFIED] uniform photo size */
+    height: 220px;
     object-fit: cover;
     border-top-left-radius: calc(0.5rem - 1px);
     border-top-right-radius: calc(0.5rem - 1px);
@@ -105,10 +131,61 @@ body {
     border-radius: 1rem;
     box-shadow: 0 0 30px rgba(0,0,0,0.2);
 }
-.comment-toggle {
-    cursor: pointer;
-    color: #0d6efd;
-    text-decoration: underline;
+
+/* 🟢 ALBUM CONTAINER STYLE */
+.album-container {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    border-radius: 15px;
+    padding: 20px;
+    margin-bottom: 30px;
+    color: white;
+    box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+}
+.album-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 15px;
+}
+.album-title {
+    font-size: 1.3rem;
+    font-weight: bold;
+}
+.album-count {
+    background: rgba(255,255,255,0.2);
+    padding: 5px 15px;
+    border-radius: 20px;
+    font-size: 0.9rem;
+}
+
+/* 🟢 Bootstrap Carousel Customization */
+.album-carousel .carousel-item img {
+    height: 250px;
+    object-fit: cover;
+    border-radius: 10px;
+}
+.album-carousel .carousel-caption {
+    background: rgba(0,0,0,0.5);
+    border-radius: 10px;
+    padding: 8px;
+    bottom: 20px;
+}
+.album-carousel .carousel-caption h6 {
+    font-size: 0.9rem;
+    margin-bottom: 0;
+}
+
+/* 🟢 Single photo card */
+.photo-card {
+    border: 1px solid #dee2e6;
+    border-radius: 10px;
+    overflow: hidden;
+    transition: transform 0.3s;
+    height: 100%;
+}
+.photo-card:hover {
+    transform: translateY(-5px);
+    box-shadow: 0 5px 15px rgba(0,0,0,0.1);
 }
 </style>
 </head>
@@ -183,7 +260,7 @@ body {
         <ul class="list-group list-group-flush">
             <?php while($u = mysqli_fetch_assoc($users_result)): ?>
                 <li class="list-group-item">
-                    <i class="bi bi-person-fill text-warning"></i> <?= $u['username'] ?>
+                    <i class="bi bi-person-fill text-warning"></i> <?= htmlspecialchars($u['username']) ?>
                 </li>
             <?php endwhile; ?>
         </ul>
@@ -195,24 +272,26 @@ body {
 =========================== -->
 <div class="col-lg-8">
 
-<!-- [ADDED] Timeline + Sort Controls -->
+<!-- Timeline + Sort Controls -->
 <div class="d-flex justify-content-between mb-3">
     <div>
-        <a href="?timeline=day<?= $selected_date ? '&date='.$selected_date : '' ?>"
+        <a href="?timeline=day<?= $selected_date ? '&date='.$selected_date : '' ?>&sort=<?= $sort ?>"
            class="btn btn-outline-primary btn-sm <?= $timeline==='day'?'active':'' ?>">
            Өдрөөр
         </a>
-        <a href="?timeline=week<?= $selected_date ? '&date='.$selected_date : '' ?>"
+        <a href="?timeline=week<?= $selected_date ? '&date='.$selected_date : '' ?>&sort=<?= $sort ?>"
            class="btn btn-outline-primary btn-sm <?= $timeline==='week'?'active':'' ?>">
            Долоо хоногоор
         </a>
     </div>
 
     <div>
-        <a href="?sort=new" class="btn btn-outline-secondary btn-sm <?= $sort==='new'?'active':'' ?>">
+        <a href="?sort=new<?= $selected_date ? '&date='.$selected_date.'&timeline='.$timeline : '' ?>"
+           class="btn btn-outline-secondary btn-sm <?= $sort==='new'?'active':'' ?>">
             Шинэ → Хуучин
         </a>
-        <a href="?sort=old" class="btn btn-outline-secondary btn-sm <?= $sort==='old'?'active':'' ?>">
+        <a href="?sort=old<?= $selected_date ? '&date='.$selected_date.'&timeline='.$timeline : '' ?>"
+           class="btn btn-outline-secondary btn-sm <?= $sort==='old'?'active':'' ?>">
             Хуучин → Шинэ
         </a>
     </div>
@@ -222,41 +301,153 @@ body {
     <?= $feed_title ?>
 </h3>
 
-<div class="row g-3">
-
-<?php
-$last_date = ''; // [ADDED] Timeline header
-while($row = mysqli_fetch_assoc($photo_result)):
-    if ($row['date_taken'] !== $last_date):
-        $last_date = $row['date_taken'];
-?>
-    <div class="col-12">
-        <h5 class="mt-4 text-secondary border-bottom pb-1">
-            📅 <?= $last_date ?>
-        </h5>
+<!-- 🟢 MIXED FEED - Albums and Photos Together -->
+<?php if (empty($all_photos)): ?>
+    <div class="col-12 text-center py-5">
+        <i class="bi bi-camera-off display-4 text-muted"></i>
+        <h4 class="text-muted mt-3">Зураг олдсонгүй</h4>
+        <?php if ($selected_date): ?>
+            <p class="text-muted">Энэ өдөр зураг байршуулаагүй байна.</p>
+        <?php else: ?>
+            <p class="text-muted">Одоогоор зураг байхгүй байна.</p>
+        <?php endif; ?>
+        <a href="upload.php" class="btn btn-primary mt-3">
+            <i class="bi bi-cloud-arrow-up me-2"></i>Эхний зураг байршуулах
+        </a>
     </div>
+<?php else: ?>
+    <?php
+    $displayed_albums = array(); // Track which albums we've displayed
+    $album_shown = false;
+    
+    // First display albums
+    foreach($all_photos as $row): 
+        // Check if this photo is part of an album we haven't displayed yet
+        if (!empty($row['album_id']) && !in_array($row['album_id'], $displayed_albums)):
+            $album_id = $row['album_id'];
+            $album = $albums[$album_id];
+            $displayed_albums[] = $album_id;
+            $album_shown = true;
+    ?>
+            <!-- 🟢 ALBUM DISPLAY - Full width -->
+            <div class="album-container mb-4">
+                <div class="album-header">
+                    <div class="album-title">
+                        <i class="bi bi-collection-play me-2"></i><?= htmlspecialchars($album['album_name']) ?>
+                    </div>
+                    <div class="album-count">
+                        <i class="bi bi-camera me-1"></i><?= $album['count'] ?> зураг
+                    </div>
+                </div>
+                
+                <div class="album-info text-white mb-3">
+                    <small>
+                        <i class="bi bi-person me-1"></i><?= htmlspecialchars($album['username']) ?> |
+                        <i class="bi bi-calendar3 me-1"></i><?= $album['date_taken'] ?>
+                    </small>
+                </div>
+                
+                <!-- 🟢 BOOTSTRAP CAROUSEL FOR ALBUM -->
+                <?php if ($album['count'] > 0): ?>
+                    <div id="carousel-<?= $album_id ?>" class="carousel slide album-carousel" data-bs-ride="carousel">
+                        <!-- Carousel Indicators -->
+                        <div class="carousel-indicators">
+                            <?php for($i = 0; $i < min(3, $album['count']); $i++): ?>
+                                <button type="button" data-bs-target="#carousel-<?= $album_id ?>" 
+                                        data-bs-slide-to="<?= $i ?>" 
+                                        class="<?= $i === 0 ? 'active' : '' ?>" 
+                                        aria-current="<?= $i === 0 ? 'true' : 'false' ?>">
+                                </button>
+                            <?php endfor; ?>
+                        </div>
+                        
+                        <!-- Carousel Items -->
+                        <div class="carousel-inner">
+                            <?php foreach($album['photos'] as $index => $photo): ?>
+                                <?php if ($index < 5): // Limit to 5 photos in carousel ?>
+                                    <div class="carousel-item <?= $index === 0 ? 'active' : '' ?>">
+                                        <a href="photo.php?id=<?= $photo['photo_id'] ?>">
+                                            <img src="<?= htmlspecialchars($photo['file_path']) ?>" 
+                                                 class="d-block w-100" 
+                                                 alt="<?= htmlspecialchars($photo['title']) ?>">
+                                        </a>
+                                        <div class="carousel-caption d-none d-md-block">
+                                            <h6><?= htmlspecialchars($photo['title']) ?></h6>
+                                        </div>
+                                    </div>
+                                <?php endif; ?>
+                            <?php endforeach; ?>
+                        </div>
+                        
+                        <!-- Carousel Controls -->
+                        <button class="carousel-control-prev" type="button" data-bs-target="#carousel-<?= $album_id ?>" data-bs-slide="prev">
+                            <span class="carousel-control-prev-icon" aria-hidden="true"></span>
+                            <span class="visually-hidden">Өмнөх</span>
+                        </button>
+                        <button class="carousel-control-next" type="button" data-bs-target="#carousel-<?= $album_id ?>" data-bs-slide="next">
+                            <span class="carousel-control-next-icon" aria-hidden="true"></span>
+                            <span class="visually-hidden">Дараах</span>
+                        </button>
+                    </div>
+                <?php endif; ?>
+                
+                <!-- Album view all link -->
+                <div class="text-center mt-3">
+                    <a href="view_album.php?id=<?= $album_id ?>" class="btn btn-light btn-sm">
+                        <i class="bi bi-eye me-1"></i>Бүх зургуудыг харах
+                    </a>
+                </div>
+            </div>
+        <?php endif; ?>
+    <?php endforeach; ?>
+    
+    <!-- 🟢 SINGLE PHOTOS DISPLAY - Now in a row -->
+    <div class="row"> <!-- ADD THIS ROW CONTAINER -->
+    <?php
+    // Display single photos
+    foreach($all_photos as $row): 
+        if (empty($row['album_id'])): // Only single photos
+    ?>
+            <!-- 🟢 SINGLE PHOTO DISPLAY - 3 per row -->
+            <div class="col-md-6 col-lg-4 mb-4">
+                <div class="photo-card shadow-sm">
+                    <a href="photo.php?id=<?= $row['photo_id'] ?>">
+                        <img src="<?= htmlspecialchars($row['file_path']) ?>" class="card-img-top photo-card-img">
+                    </a>
+                    <div class="card-body">
+                        <h6 class="card-title"><?= htmlspecialchars($row['title']) ?></h6>
+                        <p class="small text-muted mb-1">
+                            <i class="bi bi-person"></i> <?= htmlspecialchars($row['username']) ?>
+                        </p>
+                        <?php if (!empty($row['tag'])): ?>
+                            <div class="mb-2">
+                                <?php
+                                $tags = explode(',', $row['tag']);
+                                foreach ($tags as $tag):
+                                    if (trim($tag) !== ''):
+                                ?>
+                                    <span class="badge bg-primary me-1 mb-1"><?= htmlspecialchars(trim($tag)) ?></span>
+                                <?php 
+                                    endif;
+                                endforeach; 
+                                ?>
+                            </div>
+                        <?php endif; ?>
+                        <p class="small text-muted mb-0">
+                            <i class="bi bi-calendar3"></i> <?= $row['date_taken'] ?>
+                        </p>
+                    </div>
+                </div>
+            </div>
+        <?php endif; ?>
+    <?php endforeach; ?>
+    </div> <!-- END ROW -->
 <?php endif; ?>
 
-<div class="col-md-6 col-xl-4">
-
-    <a href="photo.php?id=<?= $row['photo_id'] ?>">
-        <img src="<?= $row['file_path'] ?>" class="img-fluid photo-card-img">
-    </a>
-
-    <div class="small text-muted mt-1">
-        <i class="bi bi-person"></i> <?= $row['uploader_name'] ?>
-    </div>
-
-    <span class="badge bg-primary"><?= $row['tag'] ?></span>
-
-</div>
-<?php endwhile; ?>
-
-</div>
-</div>
-</div>
-</div>
-
+</div> <!-- End photo feed -->
+</div> <!-- End row -->
+</div> <!-- End content container -->
+</div> <!-- End main container -->
 <!-- ===========================
      SCRIPTS
 =========================== -->
@@ -276,6 +467,25 @@ document.addEventListener('DOMContentLoaded', function () {
     });
 
     calendar.render();
+    
+    // 🟢 Auto-play carousels
+    var carousels = document.querySelectorAll('.album-carousel');
+    carousels.forEach(function(carousel) {
+        // Start auto-slide
+        var carouselInstance = new bootstrap.Carousel(carousel, {
+            interval: 3000, // 3 seconds
+            ride: 'carousel'
+        });
+        
+        // Pause on hover
+        carousel.addEventListener('mouseenter', function() {
+            carouselInstance.pause();
+        });
+        
+        carousel.addEventListener('mouseleave', function() {
+            carouselInstance.cycle();
+        });
+    });
 });
 </script>
 
