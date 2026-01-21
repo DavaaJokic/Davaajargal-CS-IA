@@ -1,5 +1,12 @@
 <?php
+<<<<<<< HEAD
 // 🟢 This file connects to MySQL database
+=======
+$host = "localhost";
+$user = "root";
+$pass = "";
+$db = "family_memories";
+>>>>>>> 5e14238ba698840022a146ea29aac80d478db505
 
 // Database connection settings
 $host = "localhost";    // Database server (usually localhost for XAMPP)
