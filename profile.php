@@ -10,92 +10,222 @@ if (!isset($_SESSION['user_id'])) {
 $user_id = $_SESSION['user_id'];
 $message = '';
 
-
 if ($_SERVER["REQUEST_METHOD"] == "POST") {
-    $full_name = mysqli_real_escape_string($conn, $_POST['full_name']);
-    $username = mysqli_real_escape_string($conn, $_POST['username']); 
-
-    $update_sql = "UPDATE users SET full_name = ?, username = ? WHERE user_id = ?";
-    $stmt = mysqli_prepare($conn, $update_sql);
-    mysqli_stmt_bind_param($stmt, "ssi", $full_name, $username, $user_id);
-
-    if (mysqli_stmt_execute($stmt)) {
-       
-        $_SESSION['username'] = $username; 
-        $message = "<div class='alert alert-success'>Профайл амжилттай шинэчлэгдлээ!</div>";
+    $current_password = $_POST['current_password'];
+    $new_password = $_POST['new_password'];
+    $confirm_password = $_POST['confirm_password'];
+    
+    if ($new_password !== $confirm_password) {
+        $message = "<div class='alert alert-danger'>New passwords do not match!</div>";
     } else {
-        $message = "<div class='alert alert-danger'>Алдаа гарлаа: " . mysqli_error($conn) . "</div>";
+        // Verify current password
+        $check_sql = "SELECT password FROM users WHERE user_id = ?";
+        $check_stmt = mysqli_prepare($conn, $check_sql);
+        mysqli_stmt_bind_param($check_stmt, "i", $user_id);
+        mysqli_stmt_execute($check_stmt);
+        mysqli_stmt_bind_result($check_stmt, $hashed_password);
+        mysqli_stmt_fetch($check_stmt);
+        mysqli_stmt_close($check_stmt);
+        
+        if (password_verify($current_password, $hashed_password)) {
+            // Update password
+            $new_hashed_password = password_hash($new_password, PASSWORD_DEFAULT);
+            $update_sql = "UPDATE users SET password = ? WHERE user_id = ?";
+            $update_stmt = mysqli_prepare($conn, $update_sql);
+            mysqli_stmt_bind_param($update_stmt, "si", $new_hashed_password, $user_id);
+            
+            if (mysqli_stmt_execute($update_stmt)) {
+                $message = "<div class='alert alert-success'>Password changed successfully!</div>";
+                header("Refresh: 2; url=profile.php");
+            } else {
+                $message = "<div class='alert alert-danger'>Error: " . mysqli_error($conn) . "</div>";
+            }
+            mysqli_stmt_close($update_stmt);
+        } else {
+            $message = "<div class='alert alert-danger'>Current password is incorrect!</div>";
+        }
     }
 }
-
-
-$fetch_sql = "SELECT username, full_name, profile_picture FROM users WHERE user_id = ?";
-$stmt_fetch = mysqli_prepare($conn, $fetch_sql);
-mysqli_stmt_bind_param($stmt_fetch, "i", $user_id);
-mysqli_stmt_execute($stmt_fetch);
-$result = mysqli_stmt_get_result($stmt_fetch);
-$user_data = mysqli_fetch_assoc($result);
 ?>
 <!DOCTYPE html>
-<html lang="mn">
+<html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Профайл Удирдах</title>
+  <title>Change Password</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+  <style>
+    :root {
+        --primary-gradient: linear-gradient(to right, #004d99, #007bff);
+    }
+    
+    body {
+        background: var(--primary-gradient);
+        min-height: 100vh;
+        font-family: Arial, sans-serif;
+    }
+    
+    .content-container {
+        background: white;
+        border-radius: 15px;
+        box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+        padding: 30px;
+        margin-top: 20px;
+        max-width: 600px;
+        margin-left: auto;
+        margin-right: auto;
+    }
+    
+    .password-card {
+        border: none;
+        box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+        border-radius: 10px;
+        padding: 20px;
+    }
+    
+    .form-label {
+        font-weight: 600;
+        color: #495057;
+    }
+    
+    .input-group-text {
+        cursor: pointer;
+    }
+    
+    .input-group-text:hover {
+        background-color: #e9ecef;
+    }
+  </style>
 </head>
-<body class="bg-light">
+<body>
 
-<nav class="navbar navbar-expand-lg navbar-dark bg-primary">
-  <div class="container-fluid container">
-    <a class="navbar-brand" href="index.php">📷 Дурсамж</a>
-    <div>
-      <a href="upload.php" class="btn btn-light btn-sm me-2">Зураг байрлуулах</a>
-      <a href="search.php" class="btn btn-light btn-sm me-2">Хайх</a>
-      <a href="calendar.php" class="btn btn-light btn-sm me-2">Календар</a>
-      <a href="logout.php" class="btn btn-outline-light btn-sm">Гарах</a>
+<nav class="navbar navbar-expand-lg navbar-dark bg-primary sticky-top shadow-lg">
+  <div class="container">
+    <a class="navbar-brand fw-bold" href="index.php">
+        <i class="bi bi-camera2"></i> Family Memories
+    </a>
+    <div class="d-flex align-items-center">
+        <a href="index.php" class="btn btn-outline-light btn-sm me-2">Home</a>
+        <a href="upload.php" class="btn btn-light btn-sm me-2">Upload</a>
+        <a href="profile.php" class="btn btn-light btn-sm me-2">Profile</a>
+        <a href="logout.php" class="btn btn-danger btn-sm">Logout</a>
     </div>
   </div>
 </nav>
 
 <div class="container py-5">
-    <h2 class="text-center mb-4"><i class="bi bi-person-circle"></i> Профайл Удирдах</h2>
-    <?php echo $message; ?>
-
-    <div class="row justify-content-center">
-        <div class="col-md-6">
-            <div class="card shadow-lg p-4">
-                
-                <div class="text-center mb-4">
-                    <img src="<?php echo $user_data['profile_picture'] ?? 'default_profile.png'; ?>" 
-                         alt="Profile" class="rounded-circle mb-3" style="width: 150px; height: 150px; object-fit: cover;">
+    <div class="content-container">
+        <h2 class="text-center mb-4 text-primary">
+            <i class="bi bi-shield-lock"></i> Change Password
+        </h2>
+        
+        <?php echo $message; ?>
+        
+        <div class="password-card">
+            <form method="POST" id="passwordForm">
+                <div class="mb-3">
+                    <label class="form-label">
+                        <i class="bi bi-lock-fill"></i> Current Password
+                    </label>
+                    <div class="input-group">
+                        <input type="password" name="current_password" 
+                               class="form-control" 
+                               id="currentPassword"
+                               placeholder="Enter current password" 
+                               required>
+                        <button class="btn btn-outline-secondary" type="button" 
+                                onclick="togglePassword('currentPassword', this)">
+                            <i class="bi bi-eye"></i>
+                        </button>
+                    </div>
                 </div>
-
-                <form method="POST">
-                    <div class="mb-3">
-                        <label class="form-label fw-bold"><i class="bi bi-tag-fill"></i> Хэрэглэгчийн Нэр (Login):</label>
-                        <input type="text" name="username" class="form-control" value="<?php echo htmlspecialchars($user_data['username']); ?>" required>
+                
+                <div class="mb-3">
+                    <label class="form-label">
+                        <i class="bi bi-key-fill"></i> New Password
+                    </label>
+                    <div class="input-group">
+                        <input type="password" name="new_password" 
+                               class="form-control" 
+                               id="newPassword"
+                               placeholder="Enter new password" 
+                               required>
+                        <button class="btn btn-outline-secondary" type="button" 
+                                onclick="togglePassword('newPassword', this)">
+                            <i class="bi bi-eye"></i>
+                        </button>
                     </div>
-                    
-                    <div class="mb-3">
-                        <label class="form-label fw-bold"><i class="bi bi-person"></i> Бүтэн Нэр (Display):</label>
-                        <input type="text" name="full_name" class="form-control" value="<?php echo htmlspecialchars($user_data['full_name']); ?>" required>
+                    <small class="text-muted">Minimum 8 characters</small>
+                </div>
+                
+                <div class="mb-4">
+                    <label class="form-label">
+                        <i class="bi bi-key"></i> Confirm New Password
+                    </label>
+                    <div class="input-group">
+                        <input type="password" name="confirm_password" 
+                               class="form-control" 
+                               id="confirmPassword"
+                               placeholder="Confirm new password" 
+                               required>
+                        <button class="btn btn-outline-secondary" type="button" 
+                                onclick="togglePassword('confirmPassword', this)">
+                            <i class="bi bi-eye"></i>
+                        </button>
                     </div>
-                    
-                    <div class="mb-4">
-                        <label class="form-label fw-bold"><i class="bi bi-image"></i> Профайл зураг:</label>
-                        <input type="file" name="profile_photo" class="form-control" disabled>
-                        <div class="form-text"></div>
-                    </div>
-
-                    <button type="submit" class="btn btn-primary w-100 btn-lg">Хадгалах</button>
-                    
-                    <hr>
-                    <a href="change_password.php" class="btn btn-outline-secondary w-100">Нууц үг Солих</a>
-                </form>
-            </div>
+                </div>
+                
+                <div class="d-grid gap-2">
+                    <button type="submit" class="btn btn-primary btn-lg">
+                        <i class="bi bi-shield-check me-2"></i>
+                        Update Password
+                    </button>
+                    <a href="profile.php" class="btn btn-outline-secondary">
+                        <i class="bi bi-arrow-left me-2"></i>
+                        Back to Profile
+                    </a>
+                </div>
+            </form>
         </div>
     </div>
 </div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+// Toggle password visibility
+function togglePassword(inputId, button) {
+    const input = document.getElementById(inputId);
+    const icon = button.querySelector('i');
+    
+    if (input.type === 'password') {
+        input.type = 'text';
+        icon.classList.remove('bi-eye');
+        icon.classList.add('bi-eye-slash');
+    } else {
+        input.type = 'password';
+        icon.classList.remove('bi-eye-slash');
+        icon.classList.add('bi-eye');
+    }
+}
+
+// Form validation
+document.getElementById('passwordForm').addEventListener('submit', function(e) {
+    const newPassword = document.getElementById('newPassword').value;
+    const confirmPassword = document.getElementById('confirmPassword').value;
+    
+    if (newPassword !== confirmPassword) {
+        e.preventDefault();
+        alert('New passwords do not match. Please confirm your new password.');
+        return;
+    }
+    
+    if (newPassword.length < 8) {
+        e.preventDefault();
+        alert('New password must be at least 8 characters long.');
+        return;
+    }
+});
+</script>
+
 </body>
 </html>
